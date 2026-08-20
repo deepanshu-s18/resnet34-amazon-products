@@ -1,0 +1,21 @@
+# Ablation A1: Plain-34 (no skip connections) on CIFAR-10
+# [CRITICAL] This config MUST be byte-identical to cifar10_resnet34.yaml
+#            except for model.architecture. Any other difference invalidates
+#            the ablation — see RESEARCH_NOTES.md entry ABL-A1.
+
+experiment_id: "ABL-A1"
+description: "Ablation A1: Plain-34 without skip connections — isolates residual learning effect"
+
+model:
+  architecture: "plain34"   # THE ONLY CHANGE from cifar10_resnet34.yaml
+  num_classes: 10
+  dataset: "cifar10"
+
+training:
+  lr: 0.1
+  num_epochs: 200
+  scheduler: "step"
+  step_size: 50
+  gamma: 0.1
+  warmup_epochs: 5
+  experiment_name: "ablation_no_skip_ABL_A1_seed42"

@@ -1,0 +1,48 @@
+# Experiment E-003: ResNet-34 on Amazon Berkeley Objects (ABO)
+# Primary research contribution — real Amazon product images.
+# [CRITICAL] Run scripts/compute_dataset_stats.py before this config
+#            to generate data/splits/abo_normalization_stats.json.
+
+experiment_id: "E-003"
+description: "ResNet-34 from scratch on ABO top-50 categories — Amazon domain"
+
+data:
+  dataset_name: "abo"
+  data_root: "data/"
+  num_classes: 50
+  image_size: 224
+  num_workers: 4
+  batch_size: 64
+  pin_memory: true
+
+augmentation:
+  random_crop: false          # ABO uses RandomResizedCrop (controlled in transforms.py)
+  random_horizontal_flip: true
+  horizontal_flip_prob: 0.5
+  color_jitter_brightness: 0.3
+  color_jitter_contrast: 0.3
+  color_jitter_saturation: 0.3
+  color_jitter_hue: 0.05
+  random_grayscale_prob: 0.1
+  random_erasing_prob: 0.0
+
+model:
+  architecture: "resnet34"
+  num_classes: 50
+  dataset: "imagenet"         # 7x7 stem + maxpool for 224x224 inputs
+  dropout_rate: 0.0
+
+training:
+  lr: 0.01                   # Lower than CIFAR-10; ABO is a harder domain
+  num_epochs: 100
+  optimizer: "sgd"
+  weight_decay: 0.0001
+  momentum: 0.9
+  nesterov: true
+  scheduler: "cosine"
+  warmup_epochs: 10
+  label_smoothing: 0.0
+  use_amp: true              # AMP for faster 224x224 training
+  seed: 42
+  experiment_name: "abo_resnet34_E003_seed42"
+  checkpoint_every_n_epochs: 5

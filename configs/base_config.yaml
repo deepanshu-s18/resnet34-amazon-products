@@ -1,0 +1,55 @@
+# Base configuration — do not run directly.
+# All experiment configs inherit from this via --base-config flag in train.py.
+# [CRITICAL] Ablation configs must change ONLY the field being ablated.
+
+experiment_id: "base"
+description: "Base configuration — inherit and override specific fields only"
+
+data:
+  dataset_name: "cifar10"         # "cifar10" | "abo"
+  data_root: "data/"
+  num_classes: 10
+  image_size: 32
+  num_workers: 4
+  batch_size: 128
+  pin_memory: true
+  val_fraction: 0.1              # fraction of training data held out for validation
+  seed: 42
+
+augmentation:
+  random_crop: true
+  crop_padding: 4
+  random_horizontal_flip: true
+  horizontal_flip_prob: 0.5
+  color_jitter_brightness: 0.0
+  color_jitter_contrast: 0.0
+  color_jitter_saturation: 0.0
+  color_jitter_hue: 0.0
+  random_grayscale_prob: 0.0
+  random_erasing_prob: 0.0
+
+model:
+  architecture: "resnet34"        # "resnet34" | "plain34" | "resnet34_no_bn" | "basic_cnn"
+  num_classes: 10
+  dataset: "cifar10"             # controls stem architecture (3x3 vs 7x7 conv)
+  dropout_rate: 0.0
+
+training:
+  num_epochs: 200
+  optimizer: "sgd"               # "sgd" | "adam" | "adamw"
+  lr: 0.1
+  weight_decay: 0.0001
+  momentum: 0.9
+  nesterov: true
+  scheduler: "step"              # "step" | "cosine" | "onecycle" | "reduce_on_plateau"
+  step_size: 50                  # StepLR: decay every step_size epochs
+  gamma: 0.1                     # StepLR/ROP: decay factor
+  warmup_epochs: 5
+  label_smoothing: 0.0           # 0.0 = standard CE; 0.1 = label smoothing
+  grad_clip_norm: null           # null = no clipping
+  use_amp: false
+  seed: 42
+  experiment_name: "base"
+  log_every_n_steps: 50
+  checkpoint_every_n_epochs: 10
+  early_stopping_patience: 9999  # disabled by default

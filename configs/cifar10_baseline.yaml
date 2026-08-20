@@ -1,0 +1,23 @@
+# Experiment E-001: BasicCNN baseline on CIFAR-10
+# Ablation A1 control: plain CNN without skip connections.
+# [CRITICAL] lr=0.01 (not 0.1) because BasicCNN requires lower LR.
+#            This is a CONTROLLED scientific choice, not a mistake.
+#            If BasicCNN is trained at lr=0.1 and diverges, the ablation
+#            comparison conflates architecture and optimisation effects.
+#            Document this in RESEARCH_NOTES.md.
+
+experiment_id: "E-001"
+description: "BasicCNN baseline on CIFAR-10 — no residual connections"
+
+model:
+  architecture: "basic_cnn"
+  num_classes: 10
+
+training:
+  lr: 0.01         # Lower than ResNet-34 because BasicCNN lacks BN smoothing
+  num_epochs: 200
+  scheduler: "step"
+  step_size: 50
+  gamma: 0.1
+  warmup_epochs: 0
+  experiment_name: "cifar10_basic_cnn_E001_seed42"

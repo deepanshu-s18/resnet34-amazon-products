@@ -1,0 +1,18 @@
+# Ablation A4: CosineAnnealingLR vs StepLR
+# Tests whether smooth cosine decay converges faster or to a better optimum.
+# Compare: convergence speed (epochs to 90% of peak) and final accuracy.
+
+experiment_id: "ABL-A4"
+description: "Ablation A4: ResNet-34 with CosineAnnealingLR"
+
+model:
+  architecture: "resnet34"
+  num_classes: 10
+  dataset: "cifar10"
+
+training:
+  lr: 0.1
+  num_epochs: 200
+  scheduler: "cosine"   # THE ONLY CHANGE from cifar10_resnet34.yaml
+  warmup_epochs: 5
+  experiment_name: "ablation_cosine_lr_ABL_A4_seed42"

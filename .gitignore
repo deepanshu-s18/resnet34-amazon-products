@@ -1,0 +1,43 @@
+# Data — too large for git (ABO is ~3GB)
+data/
+*.tar
+*.zip
+*.gz
+
+# Checkpoints — reproducible from code + config
+checkpoints/
+*.pt
+*.pth
+*.onnx
+
+# Results — generated artifacts
+results/
+!results/.gitkeep
+!results/ablation_table.csv
+
+# Notebooks — commit with outputs cleared (use nbstripout)
+notebooks/.ipynb_checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Credentials — NEVER commit
+wandb/
+.netrc

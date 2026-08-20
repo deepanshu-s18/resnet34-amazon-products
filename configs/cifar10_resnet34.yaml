@@ -1,0 +1,20 @@
+# Experiment E-002: ResNet-34 from scratch on CIFAR-10
+# This validates the architecture before ABO training.
+# Expected test accuracy: >=91% (if below, there is an implementation bug).
+
+experiment_id: "E-002"
+description: "ResNet-34 from scratch on CIFAR-10 — validates residual learning"
+
+model:
+  architecture: "resnet34"
+  num_classes: 10
+  dataset: "cifar10"
+
+training:
+  lr: 0.1
+  num_epochs: 200
+  scheduler: "step"
+  step_size: 50
+  gamma: 0.1
+  warmup_epochs: 5
+  experiment_name: "cifar10_resnet34_E002_seed42"

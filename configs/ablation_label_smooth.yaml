@@ -1,0 +1,21 @@
+# Ablation A3: Label smoothing (ε=0.1) on CIFAR-10
+# Tests hypothesis: label smoothing improves ECE without hurting accuracy.
+# Compare ECE before/after; also check if accuracy changes significantly.
+
+experiment_id: "ABL-A3"
+description: "Ablation A3: ResNet-34 with label smoothing ε=0.1"
+
+model:
+  architecture: "resnet34"
+  num_classes: 10
+  dataset: "cifar10"
+
+training:
+  lr: 0.1
+  num_epochs: 200
+  scheduler: "step"
+  step_size: 50
+  gamma: 0.1
+  warmup_epochs: 5
+  label_smoothing: 0.1   # THE ONLY CHANGE from cifar10_resnet34.yaml
+  experiment_name: "ablation_label_smooth_ABL_A3_seed42"
