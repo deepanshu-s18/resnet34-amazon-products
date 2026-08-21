@@ -1,0 +1,29 @@
+# Experiment E-002b: ResNet-34 on CIFAR-10 — Colab Protocol (100ep, CosineAnnealingLR)
+#
+# IMPORTANT: This config defines PROTOCOL B (Colab reproduction run).
+# It is distinct from E-002 (Protocol A: 200ep, StepLR).
+#
+# Use this config to reproduce the 93.51% result from COLAB_TAB2_CIFAR.py
+# via the standard training script:
+#   python scripts/train.py --config configs/cifar10_resnet34_cosine.yaml
+#
+# The ONLY differences from cifar10_resnet34.yaml (E-002):
+#   - scheduler: cosine  (was: step)
+#   - num_epochs: 100    (was: 200)
+#   - No step_size / gamma (cosine needs T_max, not step_size)
+# Everything else (lr, weight_decay, momentum, seed, augmentation) is identical.
+
+experiment_id: "E-002b"
+description: "ResNet-34 on CIFAR-10 — Colab Protocol (100ep, CosineAnnealingLR) — reproduces 93.51%"
+
+model:
+  architecture: "resnet34"
+  num_classes: 10
+  dataset: "cifar10"
+
+training:
+  lr: 0.1
+  num_epochs: 100
+  scheduler: "cosine"
+  warmup_epochs: 5
+  experiment_name: "cifar10_resnet34_E002b_cosine_seed42"

@@ -1,39 +1,107 @@
 ## PASTE THIS INTO COLAB TAB 1 — ONE CELL AT A TIME
+##
+## PRE-REQUISITES before running:
+##   1. ABO dataset setup:
+##        Follow ABO_SETUP.md in the project — download + prepare + upload to Drive
+##        Upload these to Google Drive/abo_dataset/:
+##          - abo_splits.csv
+##          - abo_label_map.json
+##          - images/small/ folder (~2.3GB)
+##
+##   2. Project zip (for src/ imports):
+##        On your Mac: cd ~/Downloads && zip -r resnet34.zip resnet34-amazon-products/
+##        Upload resnet34.zip to Google Drive root (MyDrive/)
 
-## ════════════════════════════════════════
-## CELL 1: Mount Drive
-## ════════════════════════════════════════
+## ════════════════════════════════════════════════════════════
+## CELL 1: Mount Drive + setup project from zip
+## ════════════════════════════════════════════════════════════
 from google.colab import drive
 drive.mount('/content/drive')
 
-## ════════════════════════════════════════
+import subprocess, sys, os
+
+ZIP_PATH    = "/content/drive/MyDrive/resnet34.zip"       # ← path to project zip
+PROJECT_DIR = "/content/resnet34-amazon-products"
+
+if not os.path.exists(PROJECT_DIR):
+    if not os.path.exists(ZIP_PATH):
+        raise FileNotFoundError(
+            f"Project zip not found at {ZIP_PATH}.\n"
+            "On your Mac run:\n"
+            "  cd ~/Downloads && zip -r resnet34.zip resnet34-amazon-products/\n"
+            "Then upload resnet34.zip to Google Drive root."
+        )
+    subprocess.run(["unzip", "-q", ZIP_PATH, "-d", "/content/"], check=True)
+    print("✓ Project unzipped")
+else:
+    print("✓ Project directory already exists")
+
+sys.path.insert(0, PROJECT_DIR)
+subprocess.run(["pip", "install", "-e", PROJECT_DIR, "-q", "--no-deps"], check=True)
+print("✓ src/ imports ready")
+
+## ════════════════════════════════════════════════════════════
 ## CELL 2: Verify your ABO files are there
-## ════════════════════════════════════════
+## ════════════════════════════════════════════════════════════
 import os
-DRIVE_ROOT = "/content/drive/MyDrive/abo_dataset"  # ← CHANGE THIS TO YOUR FOLDER
+DRIVE_ROOT = "/content/drive/MyDrive/abo_dataset"
 
-print("Checking files...")
-print("splits.csv:", os.path.exists(f"{DRIVE_ROOT}/abo_splits.csv"))
-print("label_map:", os.path.exists(f"{DRIVE_ROOT}/abo_label_map.json"))
-print("images:", os.path.exists(f"{DRIVE_ROOT}/images/small"))
+print("Checking ABO files...")
 
-# ── If all three say True, run Cell 3 ──
-# ── If any say False, your Drive upload is incomplete ──
+# ── Extract tar to LOCAL storage if images/small not ready ───────────
+# Extracting Drive→Drive is extremely slow (network I/O for every file).
+# Correct approach: copy tar to local SSD first, then extract locally.
+images_local = "/content/images/small"
+tar_drive    = f"{DRIVE_ROOT}/abo-images-small.tar"
 
-## ════════════════════════════════════════
+if not os.path.exists(images_local):
+    if os.path.exists(tar_drive):
+        print("  images/small: not found — copying tar to local disk (~5 min)...")
+        subprocess.run(["cp", tar_drive, "/content/abo.tar"], check=True)
+        print("  images/small: extracting locally (~3 min)...")
+        subprocess.run(["tar", "-xf", "/content/abo.tar", "-C", "/content/"], check=True)
+        os.remove("/content/abo.tar")  # free space
+        print(f"  images/small: ✓ extracted to {images_local}")
+    else:
+        raise FileNotFoundError(
+            f"No images found.\n"
+            f"Upload abo-images-small.tar to {DRIVE_ROOT} on Google Drive."
+        )
+else:
+    print("  images/small: ✓ already extracted")
+
+# ── Verify all required files ─────────────────────────────────────────
+ok = True
+for path, label in [
+    (f"{DRIVE_ROOT}/abo_splits.csv",     "splits.csv"),
+    (f"{DRIVE_ROOT}/abo_label_map.json", "label_map"),
+    (images_local,                        "images/small"),
+]:
+    exists = os.path.exists(path)
+    print(f"  {label:20s}: {'✓' if exists else '✗ MISSING'}")
+    if not exists:
+        ok = False
+if not ok:
+    raise FileNotFoundError("Missing files — check Drive folder.")
+print("\n✓ All files found — run Cell 3")
+
+
+## ════════════════════════════════════════════════════════════
 ## CELL 3: Full ABO training — paste & run
-## ════════════════════════════════════════
+## ════════════════════════════════════════════════════════════
 import torch, torch.nn as nn, torch.nn.functional as F
 import torchvision.transforms as T
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd, numpy as np, json, time, random
 from pathlib import Path
 from PIL import Image
+from src.models.model_factory import ModelFactory
 
 DRIVE_ROOT  = "/content/drive/MyDrive/abo_dataset"  # ← SAME AS ABOVE
 SPLITS_CSV  = f"{DRIVE_ROOT}/abo_splits.csv"
 LABEL_MAP   = f"{DRIVE_ROOT}/abo_label_map.json"
-IMAGES_BASE = f"{DRIVE_ROOT}/images/small"
+IMAGES_BASE = "/content/images/small"          # extracted locally by Cell 2
+
 SEED = 42
 
 def set_seed():
@@ -47,51 +115,13 @@ print(f"Device: {DEVICE}")
 if DEVICE.type == "cuda":
     print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-# ── Model ─────────────────────────────────────────────────────────
-class BasicBlock(nn.Module):
-    def __init__(self, ic, oc, stride=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(ic, oc, 3, stride=stride, padding=1, bias=False)
-        self.bn1   = nn.BatchNorm2d(oc)
-        self.relu  = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(oc, oc, 3, padding=1, bias=False)
-        self.bn2   = nn.BatchNorm2d(oc)
-        self.shortcut = nn.Identity()
-        if stride != 1 or ic != oc:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(ic, oc, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(oc))
-    def forward(self, x):
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.relu(out + self.shortcut(x))
 
-class ResNet34(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.stem   = nn.Sequential(
-            nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False),
-            nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.MaxPool2d(3, stride=2, padding=1))
-        self.layer1 = self._make(64,   64, 3, 1)
-        self.layer2 = self._make(64,  128, 4, 2)
-        self.layer3 = self._make(128, 256, 6, 2)
-        self.layer4 = self._make(256, 512, 3, 2)
-        self.pool   = nn.AdaptiveAvgPool2d(1)
-        self.fc     = nn.Linear(512, num_classes)
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1); nn.init.constant_(m.bias, 0)
-    def _make(self, ic, oc, n, stride):
-        layers = [BasicBlock(ic, oc, stride)]
-        for _ in range(1, n): layers.append(BasicBlock(oc, oc))
-        return nn.Sequential(*layers)
-    def forward(self, x):
-        x = self.stem(x)
-        x = self.layer4(self.layer3(self.layer2(self.layer1(x))))
-        return self.fc(torch.flatten(self.pool(x), 1))
+
+# ── Model (imported from src/ — same code as the unit-tested implementation) ──
+# ModelFactory.create("resnet34", num_classes=NUM_CLASSES, dataset="imagenet")
+# is called below AFTER we know NUM_CLASSES from the dataset CSV.
+# The imagenet stem (7×7 + MaxPool) is correct here — ABO uses 224×224 images.
+
 
 # ── Dataset ────────────────────────────────────────────────────────
 MEAN = (0.485, 0.456, 0.406)
@@ -113,10 +143,16 @@ class ABODataset(Dataset):
     def __len__(self): return len(self.df)
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
+        img_path = row["image_path"]
+        # Remap any absolute prefix → local images_base
+        # e.g. /Users/.../images/small/14/abc.jpg → /content/images/small/14/abc.jpg
+        if "images/small/" in img_path:
+            rel = img_path.split("images/small/", 1)[1]
+            img_path = str(self.images_base / rel)
         try:
-            img = Image.open(row["image_path"]).convert("RGB")
+            img = Image.open(img_path).convert("RGB")
             return self.tfm(img), int(row["label"])
-        except:
+        except Exception:
             return torch.zeros(3, 224, 224), int(row["label"])
 
 # ── Load data ──────────────────────────────────────────────────────
@@ -125,28 +161,45 @@ with open(LABEL_MAP) as f: label_map = json.load(f)
 class_names = [k for k,v in sorted(label_map.items(), key=lambda x: x[1])]
 NUM_CLASSES = len(class_names)
 
+# Remap Mac absolute paths → Colab local paths
+# CSV was built on Mac: /Users/.../images/small/xx/file.jpg
+# In Colab images are at:  /content/images/small/xx/file.jpg
+if df['image_path'].iloc[0].startswith('/Users') or \
+   not df['image_path'].iloc[0].startswith('/content'):
+    df['image_path'] = df['image_path'].str.replace(
+        r'^.*/images/small/', f'{IMAGES_BASE}/', regex=True)
+    # Quick sanity check
+    missing = df['image_path'].apply(lambda p: not os.path.exists(p)).sum()
+    print(f"Path remap: {missing:,} missing / {len(df):,} total"
+          f" {'✓ all found' if missing == 0 else '⚠ check IMAGES_BASE'}")
+
 print(f"\nDataset: {len(df):,} samples | {NUM_CLASSES} classes")
 print(f"Train: {(df.split=='train').sum():,} | Val: {(df.split=='val').sum():,} | Test: {(df.split=='test').sum():,}")
 
 tr_ds = ABODataset(df[df.split=="train"], IMAGES_BASE, "train")
 va_ds = ABODataset(df[df.split=="val"],   IMAGES_BASE, "val")
 te_ds = ABODataset(df[df.split=="test"],  IMAGES_BASE, "test")
-tr_ld = DataLoader(tr_ds, 64, shuffle=True,  num_workers=2, pin_memory=True)
-va_ld = DataLoader(va_ds, 128, shuffle=False, num_workers=2, pin_memory=True)
-te_ld = DataLoader(te_ds, 128, shuffle=False, num_workers=2, pin_memory=True)
+tr_ld = DataLoader(tr_ds, 128, shuffle=True,  num_workers=4, pin_memory=True)
+va_ld = DataLoader(va_ds, 256, shuffle=False, num_workers=4, pin_memory=True)
+te_ld = DataLoader(te_ds, 256, shuffle=False, num_workers=4, pin_memory=True)
 
 # ── Train ──────────────────────────────────────────────────────────
 set_seed()
-model  = ResNet34(NUM_CLASSES).to(DEVICE)
+model    = ModelFactory.create("resnet34", num_classes=NUM_CLASSES, dataset="imagenet").to(DEVICE)
 n_params = sum(p.numel() for p in model.parameters())
 print(f"\nResNet-34: {n_params/1e6:.2f}M params")
+# Param count gate — catches any stem/architecture mismatch immediately
+expected = 21_282_122 + (NUM_CLASSES - 10) * 512  # FC layer scales with num_classes
+assert n_params > 21_000_000, f"Param count {n_params:,} seems too low — check model creation"
+print(f"✓ Param count gate passed: {n_params:,}")
+
 
 decay    = [p for _,p in model.named_parameters() if p.ndim >= 2]
 no_decay = [p for _,p in model.named_parameters() if p.ndim <  2]
 opt    = torch.optim.SGD([{"params":decay,"weight_decay":1e-4},
                            {"params":no_decay,"weight_decay":0}],
-                          lr=0.01, momentum=0.9, nesterov=True)
-EPOCHS = 100
+                          lr=0.1, momentum=0.9, nesterov=True)
+EPOCHS = 50     # 50ep ≈ 3h on T4 with bs=128; safe for free Colab session
 sched  = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS, eta_min=1e-6)
 crit   = nn.CrossEntropyLoss()
 scaler = torch.amp.GradScaler("cuda", enabled=(DEVICE.type=="cuda"))
@@ -194,6 +247,10 @@ for ep in range(1, EPOCHS+1):
     if val_acc > best_val:
         best_val = val_acc
         best_sd  = {k:v.cpu().clone() for k,v in model.state_dict().items()}
+        # Save to Drive immediately — survives GPU quota disconnections
+        torch.save({"model_state_dict": best_sd, "num_classes": NUM_CLASSES,
+                    "epoch": ep, "best_val": best_val},
+                   f"{DRIVE_ROOT}/abo_resnet34_best.pt")
     if ep%5==0 or ep==1:
         eta=(time.time()-t0)/ep*(EPOCHS-ep)
         print(f"ep{ep:3d} | loss={tr_loss:.4f} val={val_acc:.4f} best={best_val:.4f} | ETA {eta/60:.0f}m")
@@ -284,7 +341,7 @@ gcam.remove()
 # ── Save everything ────────────────────────────────────────────────
 torch.save({"model_state_dict":best_sd,"num_classes":NUM_CLASSES,
             "test_acc":te_acc,"f1":te_f1,"class_names":class_names},
-           "/tmp/abo_resnet34_best.pt")
+           f"{DRIVE_ROOT}/abo_resnet34_best.pt")   # final save to Drive
 np.save("/tmp/abo_confusion_matrix.npy", cm)
 
 import json

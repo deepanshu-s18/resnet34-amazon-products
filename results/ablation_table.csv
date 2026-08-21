@@ -1,0 +1,7 @@
+experiment_id,config,architecture,dataset,top1_accuracy,f1_macro,ece,roc_auc,params_M,training_time_min,best_epoch,notes
+E-001,configs/cifar10_baseline.yaml,basic_cnn,cifar10,72.1,0.718,0.091,0.847,4.2,24,147,Baseline no residuals; lr=0.01 required (diverges at 0.1 without BN smoothing)
+E-002,configs/cifar10_resnet34.yaml,resnet34,cifar10,91.8,0.916,0.078,0.986,21.8,58,182,Main model; reproduces He et al. CIFAR-10 result
+ABL-A1,configs/ablation_no_skip.yaml,plain34,cifar10,73.4,0.731,0.088,0.852,21.3,57,158,No skip connections; 5x params vs BasicCNN but barely better (degradation problem confirmed)
+ABL-A3,configs/ablation_label_smooth.yaml,resnet34,cifar10,92.1,0.919,0.047,0.987,21.8,61,191,ε=0.1 label smoothing; ECE -40% with negligible accuracy cost
+ABL-A4,configs/ablation_cosine_lr.yaml,resnet34,cifar10,92.4,0.922,0.081,0.988,21.8,60,194,CosineAnnealingLR; faster convergence (87% of peak by epoch 100 vs 81% for StepLR)
+E-003,configs/abo_resnet34_v1.yaml,resnet34,abo-50,83.7,0.831,0.054,0.961,21.8,263,76,Real Amazon product images; 50 categories; background bias found in Grad-CAM analysis

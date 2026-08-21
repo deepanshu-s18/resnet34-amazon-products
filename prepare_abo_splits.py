@@ -44,12 +44,29 @@ def get_english_value(field_list):
     return None
 
 
-def build_image_path(image_id, images_dir):
-    """ABO stores images at images/small/{first2chars}/{image_id}.jpg"""
-    if not image_id:
-        return None
-    p = Path(images_dir) / image_id[:2] / f"{image_id}.jpg"
-    return str(p) if p.exists() else None
+def load_image_lookup(images_dir):
+    """Load images/metadata/images.csv.gz → {image_id: absolute_path}.
+    ABO actual file paths don't follow image_id[:2] — they use a content hash.
+    The images.csv.gz has the correct mapping."""
+    csv_path = Path(images_dir).parent / "metadata" / "images.csv.gz"
+    if not csv_path.exists():
+        print(f"ERROR: images metadata not found at {csv_path}")
+        print("Expected: images/metadata/images.csv.gz inside your abo_raw folder")
+        sys.exit(1)
+
+    import csv
+    lookup = {}  # image_id → absolute path string
+    images_small = Path(images_dir)  # e.g. ~/abo_raw/images/small
+    with gzip.open(csv_path, 'rt', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            img_id = row['image_id']
+            rel_path = row['path']  # e.g. '14/14fe8812.jpg'
+            abs_path = images_small / rel_path
+            if abs_path.exists():
+                lookup[img_id] = str(abs_path)
+    print(f"Loaded {len(lookup):,} image paths from images.csv.gz")
+    return lookup
 
 
 def main():
@@ -63,6 +80,8 @@ def main():
                         help="Number of top categories to keep")
     parser.add_argument("--min-per-class",type=int, default=50,
                         help="Minimum images per category")
+    parser.add_argument("--max-per-class",type=int, default=2000,
+                        help="Max images per category (caps dominant classes, 0=unlimited)")
     args = parser.parse_args()
 
     listings_dir = Path(args.listings_dir)
@@ -79,6 +98,9 @@ def main():
         print(f"ERROR: images dir not found: {images_dir}")
         print("Make sure you ran: tar -xf abo-images-small.tar")
         sys.exit(1)
+
+    # ── Load image ID → file path lookup ────────────────────────────────
+    image_lookup = load_image_lookup(images_dir)
 
     # ── Parse all listing files ──────────────────────────────────────────
     gz_files = sorted(listings_dir.glob("*.json.gz"))
@@ -113,8 +135,8 @@ def main():
                     skipped_no_image += 1
                     continue
 
-                # Verify image file exists
-                img_path = build_image_path(main_img, images_dir)
+                # Verify image file exists using lookup table
+                img_path = image_lookup.get(main_img)
                 if not img_path:
                     skipped_missing_file += 1
                     continue
@@ -125,7 +147,9 @@ def main():
                 records.append({
                     "item_id":      item.get("item_id", ""),
                     "product_type": ptype.upper().strip(),
-                    "image_path":   img_path,
+                    # Store path relative to images/small/ for portability
+                    # e.g. "14/14fe8812.jpg" not "/Users/.../images/small/14/14fe8812.jpg"
+                    "image_path":   os.path.relpath(img_path, str(images_dir)),
                     "item_name":    name or "",
                 })
 
@@ -154,6 +178,18 @@ def main():
 
     df = df[df["product_type"].isin(top_cats)].reset_index(drop=True)
     print(f"Filtered dataset: {len(df):,} samples")
+
+    # ── Cap dominant classes ─────────────────────────────────────────────
+    if args.max_per_class > 0:
+        df = (df.groupby("product_type", group_keys=False)
+                .apply(lambda g: g.sample(min(len(g), args.max_per_class),
+                                          random_state=42),
+                       include_groups=False)
+                .reset_index(drop=True))
+        new_imb = df["product_type"].value_counts()
+        actual_ratio = new_imb.iloc[0] / new_imb.iloc[-1]
+        print(f"Capped at {args.max_per_class}/class → {len(df):,} samples  "
+              f"(imbalance now {actual_ratio:.1f}x)")
 
     # ── Create integer labels ────────────────────────────────────────────
     sorted_cats = sorted(top_cats)

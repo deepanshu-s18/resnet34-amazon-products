@@ -1,0 +1,12 @@
+architecture,seed,test_acc,f1,best_val,time_min,notes
+resnet34,42,93.67,0.9366,93.78,61,real
+plain34,42,92.27,0.9228,92.00,59,real
+resnet34,123,93.14,0.9314,93.30,61,real
+plain34,123,92.97,0.9297,93.26,57,real
+resnet34,7,93.30,0.9328,93.30,60,real
+plain34,7,92.46,0.9247,92.66,58.8,real
+
+# Aggregate (3 seeds each, all real runs on T4 GPU)
+# ResNet-34: 93.37% +/- 0.27%  F1=0.9336 +/- 0.0027
+# Plain-34:  92.57% +/- 0.36%  F1=0.9257 +/- 0.0036
+# Gap:       0.80pp +/- 0.62pp  (Protocol B, CosineAnnealingLR 100ep)

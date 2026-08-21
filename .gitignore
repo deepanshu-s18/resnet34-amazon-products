@@ -10,10 +10,13 @@ checkpoints/
 *.pth
 *.onnx
 
-# Results — generated artifacts
+# Results — track CSVs/PNGs/MD, exclude large binaries
 results/
-!results/.gitkeep
-!results/ablation_table.csv
+!results/
+!results/**
+results/**/*.pt
+results/**/*.pth
+results/**/*.npy
 
 # Notebooks — commit with outputs cleared (use nbstripout)
 notebooks/.ipynb_checkpoints/

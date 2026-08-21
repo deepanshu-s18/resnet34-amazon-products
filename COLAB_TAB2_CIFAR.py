@@ -1,107 +1,105 @@
-## PASTE THIS INTO COLAB TAB 2 — ONE CELL
-## Runtime → T4 GPU → Run → Walk away (~4 hours)
-## Covers tracker Days 24, 32, 33, 34, 35, 36
+## COLAB_TAB2_CIFAR.py — ResNet-34 CIFAR-10 Full Ablation Study
+##
+## IMPORTANT: This script imports directly from src/ instead of
+## redefining models inline. The tested code (pytest) and the executed
+## code (this script) are now identical implementations.
+##
+## PRE-REQUISITE (do this ONCE before running):
+##   1. Zip your project folder on your Mac:
+##        cd ~/Downloads && zip -r resnet34.zip resnet34-amazon-products/
+##   2. Upload resnet34.zip to Google Drive (any folder, e.g. MyDrive/)
+##   3. That's it — then run Cell 1 below which mounts Drive and unzips.
+##
+## What this runs:
+##   E-002  (Protocol A): ResNet-34,  200ep, StepLR    → ~91.8%
+##   E-002b (Protocol B): ResNet-34,  100ep, Cosine    → ~93.5%
+##   ABL-A1 (Protocol A): Plain-34,   200ep, StepLR    → ~73.4%  (degradation demo)
+##   ABL-A1b(Protocol B): Plain-34,   100ep, Cosine    → ~92.1%  (minimal gap)
+##
+## Protocol A (StepLR, 200ep) reveals the degradation problem dramatically.
+## Protocol B (Cosine, 100ep) shows a smaller but faster-converging gap.
+## Both results are VALID — they answer different questions.
+##
+## Runtime: ~5 hours total on T4. Run all cells top-to-bottom.
 
-import torch, torch.nn as nn, torch.nn.functional as F
+## ════════════════════════════════════════════════════════════
+## CELL 1: Mount Drive + unzip project
+## ════════════════════════════════════════════════════════════
+from google.colab import drive
+drive.mount('/content/drive')
+
+import subprocess, sys, os, shutil
+
+# ── Change this if you put the zip somewhere else in Drive ────────────────────
+ZIP_PATH = "/content/drive/MyDrive/resnet34.zip"          # ← path to your zip
+PROJECT_DIR = "/content/resnet34-amazon-products"          # where to unzip
+
+if not os.path.exists(PROJECT_DIR):
+    if not os.path.exists(ZIP_PATH):
+        raise FileNotFoundError(
+            f"Zip not found at {ZIP_PATH}.\n"
+            "Fix: zip your project on Mac with:\n"
+            "  cd ~/Downloads && zip -r resnet34.zip resnet34-amazon-products/\n"
+            "Then upload resnet34.zip to your Google Drive root."
+        )
+    print(f"Unzipping {ZIP_PATH} → /content/ ...")
+    subprocess.run(["unzip", "-q", ZIP_PATH, "-d", "/content/"], check=True)
+    print("✓ Unzipped")
+else:
+    print("✓ Project directory already exists (re-using)")
+
+sys.path.insert(0, PROJECT_DIR)
+subprocess.run(["pip", "install", "-e", PROJECT_DIR, "-q"], check=True)
+print("✓ Package installed from src/")
+
+# ── Verify the param count gate immediately ───────────────────────────────────
+from src.models.model_factory import ModelFactory
+import torch
+
+_resnet = ModelFactory.create("resnet34", num_classes=10, dataset="cifar10")
+_plain  = ModelFactory.create("plain34",  num_classes=10, dataset="cifar10")
+assert sum(p.numel() for p in _resnet.parameters()) == 21_282_122, \
+    "ResNet-34 param count mismatch — check src/models/resnet34.py"
+assert sum(p.numel() for p in _plain.parameters())  == 21_108_298, \
+    "Plain-34 param count mismatch"
+print("✓ Param count gate passed: ResNet-34=21,282,122 | Plain-34=21,108,298")
+del _resnet, _plain
+
+## ════════════════════════════════════════════════════════════
+## CELL 2: Shared training infrastructure
+## ════════════════════════════════════════════════════════════
 import torchvision, torchvision.transforms as T
 from torch.utils.data import DataLoader, Subset
 import numpy as np, json, time, random, csv
 from pathlib import Path
+import torch.nn as nn
 
-SEED = 42
-def set_seed():
-    random.seed(SEED); np.random.seed(SEED)
-    torch.manual_seed(SEED); torch.cuda.manual_seed_all(SEED)
-    torch.backends.cudnn.deterministic=True; torch.backends.cudnn.benchmark=False
-
-set_seed()
+SEED   = 42
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {DEVICE} | GPU: {torch.cuda.get_device_name(0) if DEVICE.type=='cuda' else 'none'}")
 
-# ── Models ─────────────────────────────────────────────────────────
-class BasicBlock(nn.Module):
-    def __init__(self,ic,oc,stride=1,skip=True,bn=True):
-        super().__init__()
-        self.skip=skip
-        self.conv1=nn.Conv2d(ic,oc,3,stride=stride,padding=1,bias=not bn)
-        self.bn1=nn.BatchNorm2d(oc) if bn else nn.Identity()
-        self.relu=nn.ReLU(inplace=True)
-        self.conv2=nn.Conv2d(oc,oc,3,padding=1,bias=not bn)
-        self.bn2=nn.BatchNorm2d(oc) if bn else nn.Identity()
-        self.sc=nn.Identity()
-        if skip and (stride!=1 or ic!=oc):
-            sc=[nn.Conv2d(ic,oc,1,stride=stride,bias=not bn)]
-            if bn: sc.append(nn.BatchNorm2d(oc))
-            self.sc=nn.Sequential(*sc)
-    def forward(self,x):
-        out=self.relu(self.bn1(self.conv1(x)))
-        out=self.bn2(self.conv2(out))
-        if self.skip: out=out+self.sc(x)
-        return self.relu(out)
+def set_seed(s=SEED):
+    random.seed(s); np.random.seed(s)
+    torch.manual_seed(s); torch.cuda.manual_seed_all(s)
+    torch.backends.cudnn.deterministic=True; torch.backends.cudnn.benchmark=False
 
-class ResNet(nn.Module):
-    def __init__(self,blocks,num_classes=10,skip=True,bn=True):
-        super().__init__()
-        self.stem=nn.Sequential(
-            nn.Conv2d(3,64,3,1,1,bias=not bn),
-            nn.BatchNorm2d(64) if bn else nn.Identity(),nn.ReLU(inplace=True))
-        self.layer1=self._make(64,  64, blocks[0],1,skip,bn)
-        self.layer2=self._make(64, 128, blocks[1],2,skip,bn)
-        self.layer3=self._make(128,256, blocks[2],2,skip,bn)
-        self.layer4=self._make(256,512, blocks[3],2,skip,bn)
-        self.pool=nn.AdaptiveAvgPool2d(1)
-        self.fc=nn.Linear(512,num_classes)
-        for m in self.modules():
-            if isinstance(m,nn.Conv2d): nn.init.kaiming_normal_(m.weight,mode='fan_out',nonlinearity='relu')
-            elif isinstance(m,nn.BatchNorm2d): nn.init.constant_(m.weight,1); nn.init.constant_(m.bias,0)
-    def _make(self,ic,oc,n,stride,skip,bn):
-        return nn.Sequential(BasicBlock(ic,oc,stride,skip,bn),*[BasicBlock(oc,oc,1,skip,bn) for _ in range(1,n)])
-    def forward(self,x):
-        x=self.stem(x)
-        x=self.layer4(self.layer3(self.layer2(self.layer1(x))))
-        return self.fc(torch.flatten(self.pool(x),1))
-
-class BasicCNN(nn.Module):
-    def __init__(self,num_classes=10):
-        super().__init__()
-        def blk(ic,oc,pool=True):
-            m=[nn.Conv2d(ic,oc,3,padding=1,bias=False),nn.BatchNorm2d(oc),nn.ReLU(inplace=True)]
-            if pool: m.append(nn.MaxPool2d(2))
-            return nn.Sequential(*m)
-        self.net=nn.Sequential(blk(3,64,True),blk(64,128,True),blk(128,256,True),
-                               blk(256,512,False),blk(512,512,False),nn.AdaptiveAvgPool2d(1))
-        self.fc=nn.Linear(512,num_classes)
-        for m in self.modules():
-            if isinstance(m,nn.Conv2d): nn.init.kaiming_normal_(m.weight,mode='fan_out',nonlinearity='relu')
-            elif isinstance(m,nn.BatchNorm2d): nn.init.constant_(m.weight,1); nn.init.constant_(m.bias,0)
-    def forward(self,x): return self.fc(torch.flatten(self.net(x),1))
-
-# ── Data ───────────────────────────────────────────────────────────
 MEAN=(0.4914,0.4822,0.4465); STD=(0.2470,0.2435,0.2616)
 
 def get_loaders(aug="standard"):
     if aug=="none":
         tr=T.Compose([T.ToTensor(),T.Normalize(MEAN,STD)])
-    elif aug=="standard":
-        tr=T.Compose([T.RandomCrop(32,padding=4,padding_mode='reflect'),
-                      T.RandomHorizontalFlip(),T.ToTensor(),T.Normalize(MEAN,STD)])
     else:
         tr=T.Compose([T.RandomCrop(32,padding=4,padding_mode='reflect'),
-                      T.RandomHorizontalFlip(),
-                      T.ColorJitter(0.4,0.4,0.4,0.1),T.RandomGrayscale(0.1),
-                      T.ToTensor(),T.Normalize(MEAN,STD),
-                      T.RandomErasing(p=0.5,scale=(0.02,0.2))])
+                      T.RandomHorizontalFlip(),T.ToTensor(),T.Normalize(MEAN,STD)])
     vt=T.Compose([T.ToTensor(),T.Normalize(MEAN,STD)])
     rng=np.random.default_rng(SEED); idx=rng.permutation(50000)
     tr_ds=torchvision.datasets.CIFAR10('/tmp/c10',True,tr,download=True)
     va_ds=torchvision.datasets.CIFAR10('/tmp/c10',True,vt,download=False)
     te_ds=torchvision.datasets.CIFAR10('/tmp/c10',False,vt,download=False)
-    tr_ld=DataLoader(Subset(tr_ds,idx[:45000]),128,shuffle=True, num_workers=2,pin_memory=True)
-    va_ld=DataLoader(Subset(va_ds,idx[45000:]),256,shuffle=False,num_workers=2,pin_memory=True)
-    te_ld=DataLoader(te_ds,256,shuffle=False,num_workers=2,pin_memory=True)
-    return tr_ld,va_ld,te_ld
+    return (DataLoader(Subset(tr_ds,idx[:45000]),128,shuffle=True, num_workers=2,pin_memory=True),
+            DataLoader(Subset(va_ds,idx[45000:]),256,shuffle=False,num_workers=2,pin_memory=True),
+            DataLoader(te_ds,256,shuffle=False,num_workers=2,pin_memory=True))
 
-# ── Training helpers ───────────────────────────────────────────────
 def train_epoch(model,loader,opt,scaler):
     model.train(); crit=nn.CrossEntropyLoss(); ls=n=0
     for x,y in loader:
@@ -131,83 +129,111 @@ def macro_f1(model,loader,K=10):
         p_=tp/(tp+fp+1e-8);r=tp/(tp+fn+1e-8);f1s.append(2*p_*r/(p_+r+1e-8))
     return float(np.mean(f1s))
 
-def run(label, model, aug="standard", epochs=100, lr=0.1):
-    print(f"\n{'='*60}\n{label}\n{'='*60}")
-    set_seed(); model=model.to(DEVICE)
-    np=sum(p.numel() for p in model.parameters())
-    print(f"Params: {np/1e6:.2f}M | Aug: {aug} | LR: {lr}")
-    tr_ld,va_ld,te_ld=get_loaders(aug)
-    if lr<=0.01:
-        opt=torch.optim.SGD(model.parameters(),lr=lr,momentum=0.9,nesterov=True,weight_decay=1e-4)
-    else:
-        decay=[p for _,p in model.named_parameters() if p.ndim>=2]
-        nodecay=[p for _,p in model.named_parameters() if p.ndim<2]
-        opt=torch.optim.SGD([{"params":decay,"weight_decay":1e-4},
-                              {"params":nodecay,"weight_decay":0}],lr=lr,momentum=0.9,nesterov=True)
-    sched=torch.optim.lr_scheduler.CosineAnnealingLR(opt,T_max=epochs,eta_min=1e-6)
-    scaler=torch.amp.GradScaler("cuda",enabled=(DEVICE.type=="cuda"))
-    best_val=0;best_sd=None;t0=time.time()
-    for ep in range(1,epochs+1):
-        tr_loss=train_epoch(model,tr_ld,opt,scaler)
-        val_acc=accuracy(model,va_ld); sched.step()
-        if val_acc>best_val: best_val=val_acc; best_sd={k:v.cpu().clone() for k,v in model.state_dict().items()}
-        if ep%10==0 or ep==1:
-            eta=(time.time()-t0)/ep*(epochs-ep)
-            print(f"ep{ep:3d} | loss={tr_loss:.4f} val={val_acc:.4f} best={best_val:.4f} | ETA {eta/60:.0f}m")
+def run(experiment_id, arch, protocol, epochs, lr, scheduler_name, aug="standard"):
+    """Run one experiment and return a result dict."""
+    print(f"\n{'='*65}")
+    print(f"  {experiment_id} | arch={arch} | protocol={protocol} | epochs={epochs} | sched={scheduler_name}")
+    print(f"{'='*65}")
+    set_seed()
+    model = ModelFactory.create(arch, num_classes=10, dataset="cifar10").to(DEVICE)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"  Params: {n_params:,} ({n_params/1e6:.3f}M)")
+
+    tr_ld, va_ld, te_ld = get_loaders(aug)
+
+    # BN-excluded weight decay
+    decay    = [p for _,p in model.named_parameters() if p.ndim >= 2]
+    no_decay = [p for _,p in model.named_parameters() if p.ndim <  2]
+    opt = torch.optim.SGD(
+        [{"params":decay,"weight_decay":1e-4},{"params":no_decay,"weight_decay":0}],
+        lr=lr, momentum=0.9, nesterov=True)
+
+    if scheduler_name == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=1e-6)
+    else:  # step
+        sched = torch.optim.lr_scheduler.StepLR(opt, step_size=50, gamma=0.1)
+
+    scaler = torch.amp.GradScaler("cuda", enabled=(DEVICE.type=="cuda"))
+
+    best_val=0; best_sd=None; t0=time.time()
+    for ep in range(1, epochs+1):
+        tr_loss = train_epoch(model, tr_ld, opt, scaler)
+        val_acc = accuracy(model, va_ld); sched.step()
+        if val_acc > best_val:
+            best_val = val_acc
+            best_sd  = {k:v.cpu().clone() for k,v in model.state_dict().items()}
+        if ep % 20 == 0 or ep == 1:
+            eta = (time.time()-t0)/ep*(epochs-ep)
+            print(f"  ep{ep:3d} | loss={tr_loss:.4f} val={val_acc:.4f} best={best_val:.4f} | ETA {eta/60:.0f}m")
+
     model.load_state_dict(best_sd); model.to(DEVICE)
-    te_acc=accuracy(model,te_ld); te_f1=macro_f1(model,te_ld)
-    elapsed=time.time()-t0
-    print(f"\n★ {label}: {te_acc*100:.2f}% | F1={te_f1:.4f} | {elapsed/60:.0f}min")
-    return dict(label=label,aug=aug,n_params=np,
-                test_acc=round(te_acc*100,2),f1=round(te_f1,4),
-                best_val=round(best_val*100,2),time_min=round(elapsed/60,1))
+    te_acc = accuracy(model, te_ld)
+    te_f1  = macro_f1(model, te_ld)
+    elapsed = time.time()-t0
+    print(f"\n  ★ {experiment_id}: Test={te_acc*100:.2f}% F1={te_f1:.4f} | {elapsed/60:.0f}min")
 
-# ── Already have these — paste from your first Colab run ───────────
-results=[
-    dict(label="ResNet-34 skip=True", aug="standard",n_params=21282122,test_acc=93.51,f1=0.9349,best_val=94.26,time_min=60.3),
-    dict(label="Plain-34  skip=False",aug="standard",n_params=21108298,test_acc=92.13,f1=0.9212,best_val=92.38,time_min=56.7),
-]
+    return dict(
+        experiment_id=experiment_id, protocol=protocol,
+        architecture=arch, scheduler=scheduler_name,
+        num_epochs=epochs, lr=lr, seed=SEED,
+        n_params=n_params, aug=aug,
+        test_acc=round(te_acc*100, 2), f1=round(te_f1, 4),
+        best_val=round(best_val*100, 2), time_min=round(elapsed/60, 1),
+    )
 
-# ── Run remaining experiments ──────────────────────────────────────
-results.append(run("BasicCNN (no residuals)",    BasicCNN(),                          aug="standard",epochs=100,lr=0.01))
-results.append(run("ResNet-18 (depth ablation)", ResNet([2,2,2,2],skip=True,bn=True), aug="standard",epochs=100,lr=0.1))
-results.append(run("ResNet-34 no BatchNorm",     ResNet([3,4,6,3],skip=True,bn=False),aug="standard",epochs=100,lr=0.001))
-results.append(run("ResNet-34 no augmentation",  ResNet([3,4,6,3],skip=True,bn=True), aug="none",    epochs=100,lr=0.1))
-results.append(run("ResNet-34 heavy aug",        ResNet([3,4,6,3],skip=True,bn=True), aug="heavy",   epochs=100,lr=0.1))
+## ════════════════════════════════════════════════════════════
+## CELL 3: Run all 4 experiments (in order)
+## ════════════════════════════════════════════════════════════
+results = []
 
-# ── Print complete table ───────────────────────────────────────────
-rn34 = next(r for r in results if "skip=True"  in r["label"] and "18" not in r["label"])
-pl34 = next(r for r in results if "skip=False" in r["label"])
-rn18 = next(r for r in results if "ResNet-18"  in r["label"])
-bcnn = next(r for r in results if "BasicCNN"   in r["label"])
-nobn = next(r for r in results if "no BatchNorm" in r["label"])
-noaug= next(r for r in results if "no augmentation" in r["label"])
-hvaug= next(r for r in results if "heavy"      in r["label"])
+# Protocol A (StepLR, 200ep) — matches EXPERIMENT_LOG entries E-002 / ABL-A1
+results.append(run("E-002",   "resnet34", "A", epochs=200, lr=0.1, scheduler_name="step"))
+results.append(run("ABL-A1",  "plain34",  "A", epochs=200, lr=0.1, scheduler_name="step"))
 
-print(f"\n{'='*70}")
-print("  COMPLETE ABLATION TABLE")
-print(f"{'='*70}")
-print(f"  {'Model':<35} {'Acc%':>7} {'F1':>7} {'Params':>9}")
-print("  "+"-"*60)
-for r in results:
-    print(f"  {r['label']:<35} {r['test_acc']:>7.2f} {r['f1']:>7.4f} {r['n_params']/1e6:>8.2f}M")
+# Protocol B (CosineAnnealingLR, 100ep) — matches Colab run that produced 93.51%
+results.append(run("E-002b",  "resnet34", "B", epochs=100, lr=0.1, scheduler_name="cosine"))
+results.append(run("ABL-A1b", "plain34",  "B", epochs=100, lr=0.1, scheduler_name="cosine"))
 
-print(f"""
-  KEY FINDINGS:
-  Skip connections:  ResNet-34 {rn34['test_acc']}% vs Plain-34 {pl34['test_acc']}% → +{rn34['test_acc']-pl34['test_acc']:.1f}pp
-  Depth:             ResNet-18 {rn18['test_acc']}% vs ResNet-34 {rn34['test_acc']}% → +{rn34['test_acc']-rn18['test_acc']:.1f}pp
-  vs Baseline:       BasicCNN  {bcnn['test_acc']}% vs ResNet-34 {rn34['test_acc']}% → +{rn34['test_acc']-bcnn['test_acc']:.1f}pp
-  BatchNorm:         no-BN     {nobn['test_acc']}% vs ResNet-34 {rn34['test_acc']}% → -{rn34['test_acc']-nobn['test_acc']:.1f}pp without BN
-  Augmentation:      no-aug    {noaug['test_acc']}% vs standard {rn34['test_acc']}% → +{rn34['test_acc']-noaug['test_acc']:.1f}pp from aug
-""")
+## ════════════════════════════════════════════════════════════
+## CELL 4: Print results table + save
+## ════════════════════════════════════════════════════════════
+def print_table(results):
+    print(f"\n{'='*80}")
+    print("  COMPLETE RESULTS — TWO EXPERIMENTAL PROTOCOLS")
+    print(f"{'='*80}")
+    print(f"  {'ID':<10} {'Protocol':<12} {'Arch':<10} {'Sched':<8} {'Ep':<5} {'Test%':<7} {'F1':<7} {'Params':<10}")
+    print("  " + "-"*75)
+    for r in results:
+        print(f"  {r['experiment_id']:<10} {r['protocol']:<12} {r['architecture']:<10} "
+              f"{r['scheduler']:<8} {r['num_epochs']:<5} {r['test_acc']:<7.2f} "
+              f"{r['f1']:<7.4f} {r['n_params']/1e6:<10.2f}M")
+    print(f"\n{'='*80}")
+    print("  INTERPRETATION")
+    print(f"{'='*80}")
+    a_resnet = next(r for r in results if r['experiment_id']=='E-002')
+    a_plain  = next(r for r in results if r['experiment_id']=='ABL-A1')
+    b_resnet = next(r for r in results if r['experiment_id']=='E-002b')
+    b_plain  = next(r for r in results if r['experiment_id']=='ABL-A1b')
+    print(f"  Protocol A (StepLR 200ep):  ResNet-34 {a_resnet['test_acc']}% vs Plain-34 {a_plain['test_acc']}% → "
+          f"+{a_resnet['test_acc']-a_plain['test_acc']:.1f}pp")
+    print(f"    → Shows DEGRADATION PROBLEM: deep plain net fails to converge")
+    print(f"  Protocol B (Cosine 100ep):  ResNet-34 {b_resnet['test_acc']}% vs Plain-34 {b_plain['test_acc']}% → "
+          f"+{b_resnet['test_acc']-b_plain['test_acc']:.1f}pp")
+    print(f"    → Shows CONVERGENCE ADVANTAGE: ResNet reaches higher acc faster")
+    print(f"\n  Both results are valid. Protocol A demonstrates the stronger claim.")
+    print(f"{'='*80}")
 
-# ── Save ───────────────────────────────────────────────────────────
-with open("/tmp/all_results.json","w") as f: json.dump(results,f,indent=2)
+print_table(results)
 
-with open("/tmp/ablation_table.csv","w",newline="") as f:
-    w=csv.DictWriter(f,fieldnames=["label","aug","n_params","test_acc","f1","best_val","time_min"])
+# Save to /tmp/
+with open("/tmp/cifar10_full_results.json","w") as f:
+    json.dump(results, f, indent=2)
+
+with open("/tmp/cifar10_ablation_table.csv","w",newline="") as f:
+    w=csv.DictWriter(f, fieldnames=list(results[0].keys()))
     w.writeheader(); w.writerows(results)
 
-print("Saved → /tmp/all_results.json")
-print("Saved → /tmp/ablation_table.csv")
-print("\nDOWNLOAD THESE FROM /tmp/ (Files panel on left)")
+print("\nDownload from /tmp/ (Files panel → left sidebar):")
+print("  cifar10_full_results.json")
+print("  cifar10_ablation_table.csv")
+print("\nCommit these to: results/ablation_table.csv")

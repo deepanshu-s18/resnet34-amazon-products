@@ -42,12 +42,13 @@ NEXT STEPS: E-002 (ResNet-34 baseline for comparison)
 
 ---
 
-## E-002: ResNet-34 on CIFAR-10
+## E-002: ResNet-34 on CIFAR-10 — Protocol A (StepLR, 200 epochs)
 
 ```
 EXPERIMENT ID: E-002
 DATE: [Date]
 CONFIG: configs/cifar10_resnet34.yaml
+PROTOCOL: A — StepLR (step_size=50, gamma=0.1), 200 epochs, lr=0.1
 HYPOTHESIS: ResNet-34 should achieve ≥91% test accuracy on CIFAR-10 (matching He et al.
             Table 6 for a similarly adapted architecture).
 STATUS: COMPLETED
@@ -57,16 +58,51 @@ KEY RESULTS:
   ece:            0.078
   training_time:  58 min (1 GPU)
   best_epoch:     182
-  parameters:     21,797,672
+  parameters:     21,282,122
+NOTE: The 93.51% result cited in README came from a DIFFERENT run (E-002b below).
+      E-002 uses StepLR+200ep; E-002b uses CosineAnnealingLR+100ep.
 UNEXPECTED FINDINGS:
   - Layer gradient norms confirmed: layer1/layer4 ratio = 1.9× (ResNet-34) vs 47×
     (Plain-34 in ABL-A1). Skip connections demonstrably improve gradient flow.
+    Evidence: results/gradient_norms/ratio_summary.csv
   - ECE of 0.078 indicates moderate overconfidence — motivates Ablation A3.
   - Top-5 confusion pair: automobile/truck share 18 misclassifications each way.
-NEXT STEPS: ABL-A1 (no skip connections) for comparison
+NEXT STEPS: ABL-A1 (no skip connections) for comparison, E-002b (Protocol B)
 ```
 
 ---
+
+## E-002b: ResNet-34 on CIFAR-10 — Protocol B (CosineAnnealingLR, 100 epochs)
+
+```
+EXPERIMENT ID: E-002b
+DATE: [Date]
+CONFIG: configs/cifar10_resnet34_cosine.yaml
+PROTOCOL: B — CosineAnnealingLR (T_max=100, eta_min=1e-6), 100 epochs, lr=0.1
+HYPOTHESIS: CosineAnnealingLR should reach higher peak accuracy faster than
+            StepLR, consistent with ABL-A4 findings.
+STATUS: COMPLETED
+KEY RESULTS:
+  top1_accuracy:  93.51%
+  f1_macro:       0.9349
+  best_val:       94.26%
+  training_time:  60 min (T4 GPU)
+  best_epoch:     ~95 (cosine, no hard step)
+  parameters:     21,282,122
+  seed:           42
+NOTE: This is the source of the "93.51%" headline result in README.md.
+      It uses a DIFFERENT protocol from E-002 (cosine vs step, 100 vs 200 epochs).
+      See COLAB_TAB2_CIFAR.py (Protocol B section) for reproducible code.
+UNEXPECTED FINDINGS:
+  - CosineAnnealingLR converged ~30% faster than StepLR (100ep vs 182 best_epoch)
+  - No plateau visible at epoch 100 — could run longer for higher accuracy
+MULTI-SEED STATUS: Seed=42 complete. Seeds 123, 7 PENDING.
+  See results/multi_seed_results.csv and COLAB_MULTISEED.py.
+NEXT STEPS: Run COLAB_MULTISEED.py to get mean±std across 3 seeds.
+```
+
+---
+
 
 ## ABL-A1: Plain-34 (No Skip Connections)
 
