@@ -1,0 +1,9 @@
+{
+  "test_acc": 81.37,
+  "f1": 0.787,
+  "best_val": 81.26,
+  "num_classes": 50,
+  "params_M": 21.31,
+  "epochs": 100,
+  "time_min": 196.6
+}
