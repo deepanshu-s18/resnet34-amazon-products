@@ -77,10 +77,10 @@ Epoch100:  ResNet-34  93.5%  vs  Plain-34  92.1%  →  +1.4pp
 
 | Model | layer4/layer1 grad norm ratio | Interpretation |
 |-------|-------------------------------|----------------|
-| ResNet-34 | **1.5×** | Near-uniform gradient flow — layer4 slightly stronger than layer1 ✅ |
-| Plain-34 | **0.25×** | Gradient instability: layer4 vanishes (0.021) while layer1 explodes (0.084) ⚠️ |
+| ResNet-34 | **1.5×** | Near-uniform gradient flow — skip connections balance gradient magnitude across depth ✅ |
+| Plain-34 | **0.25×** | **Gradient magnitude inversion**: layer4 norms collapse (0.021) while layer1 norms grow (0.084) ⚠️ |
 
-> **Key finding**: Plain-34 does not simply show vanishing gradients — it shows **gradient instability**: layer4 (near output) receives near-zero updates while layer1 (near input) receives 4× larger, unstable updates. Skip connections resolve this by creating direct gradient highways that stabilise signal magnitude across all depth levels.
+> **Key finding**: Plain-34 does not show simple gradient vanishing. It shows **gradient magnitude inversion** — the chain of multiplications through 34 plain layers causes layer4 (last blocks, near output, receives gradients first in backprop) to collapse to near-zero updates, while layer1 (first blocks, near input) accumulates amplified, unstable updates. Skip connections create additive gradient highways that prevent this inversion, keeping norms balanced at every depth level.
 
 Regenerate: `python scripts/analyze_grad_norms.py --epochs 20`
 
@@ -277,13 +277,23 @@ pytest tests/ -v
 - **Grad-CAM implementation correct** — sanity check script passes, demo images in `results/gradcam/`
 - **BN params excluded from weight decay** — `TestParameterCounts::test_trainable_equals_total_when_no_frozen_layers`
 - **172 tests passing** — `pytest tests/ -v`
-- **Tested code = executed code** — all Colab scripts import from `src/` via `ModelFactory`
+- **Tested code = executed code** — all Colab/Kaggle scripts import from `src/` via `ModelFactory`
 
-**In progress (will update when runs complete):**
-- layer4/layer1 gradient ratio from real training (need committed checkpoint)
-- ABO training and test accuracy (follow [ABO_SETUP.md](ABO_SETUP.md))
-- Real Grad-CAM heatmaps on Amazon product images (pending ABO training)
-- Error analysis from actual ABO inference failures
+---
+
+## Limitations
+
+Honest accounting of what this project does and does not claim:
+
+| Claim | Evidence | Limitation |
+|-------|----------|------------|
+| ResNet-34 beats Plain-34 by 18.4pp | Protocol A, **1 seed** | Not multi-seed; could be seed-dependent |
+| Protocol B gap = 0.8pp | 3 seeds, mean±std | Correct and properly measured |
+| Gradient magnitude inversion in Plain-34 | 20-epoch MPS run | Short run; longer run would stabilise estimates |
+| Background bias as failure mode | Visual inspection of ~10 Grad-CAM failure cases | Not measured with IoU vs bounding box |
+| ABO 81.37% from scratch | 1 seed, 100 epochs, T4 GPU | Single seed; not compared to ImageNet-pretrained baseline |
+
+> These limitations are typical for a portfolio project. The CIFAR-10 Protocol B results (6 real runs, mean±std) are the most statistically robust claims.
 
 ---
 
