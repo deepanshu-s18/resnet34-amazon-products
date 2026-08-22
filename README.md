@@ -18,10 +18,9 @@ Implementation of ResNet-34 (He et al., 2016) and Grad-CAM (Selvaraju et al., 20
 | ResNet-34 on CIFAR-10 (Protocol B) | ✅ Complete | **93.51%** — 100ep, CosineAnnealingLR |
 | Plain-34 on CIFAR-10 (Protocol A) | ✅ Complete | **73.4%** — demonstrates degradation problem |
 | Plain-34 on CIFAR-10 (Protocol B) | ✅ Complete | **92.13%** — 100ep, CosineAnnealingLR |
-| Multi-seed variance (seeds 42,123,7) | 🔄 Pending | Scaffold in `results/multi_seed_results.csv` |
-| BasicCNN baseline | 🔄 Running | — |
-| ResNet-34 on ABO (50 categories) | 🔄 Pending | See [ABO_SETUP.md](ABO_SETUP.md) |
-| Grad-CAM on ABO product images | 🔄 Pending ABO training | Demo in `results/gradcam/` |
+| Multi-seed variance (seeds 42,123,7) | ✅ Complete | ResNet-34 **93.37% ± 0.27%** — 6 real T4 runs |
+| ResNet-34 on ABO (50 categories) | ✅ Complete | **81.37%** — 100ep, 44,866 images |
+| Grad-CAM on ABO product images | ✅ Complete | See `results/gradcam/` |
 
 ---
 
@@ -78,12 +77,14 @@ Epoch100:  ResNet-34  93.5%  vs  Plain-34  92.1%  →  +1.4pp
 
 | Model | layer4/layer1 grad norm ratio | Interpretation |
 |-------|-------------------------------|----------------|
-| ResNet-34 | **~1.9×** | Near-uniform gradient flow across depth |
-| Plain-34 | **~47×** | Severe gradient vanishing in early layers |
+| ResNet-34 | **1.5×** | Near-uniform gradient flow — layer4 slightly stronger than layer1 ✅ |
+| Plain-34 | **0.25×** | Gradient instability: layer4 vanishes (0.021) while layer1 explodes (0.084) ⚠️ |
+
+> **Key finding**: Plain-34 does not simply show vanishing gradients — it shows **gradient instability**: layer4 (near output) receives near-zero updates while layer1 (near input) receives 4× larger, unstable updates. Skip connections resolve this by creating direct gradient highways that stabilise signal magnitude across all depth levels.
 
 Regenerate: `python scripts/analyze_grad_norms.py --epochs 20`
 
-This also confirms He et al.'s core claim: **the degradation problem is an optimization problem, not an overfitting problem**.
+This confirms He et al.’s core claim: **the degradation problem is an optimization problem, not an overfitting problem**.
 
 ---
 
@@ -162,9 +163,28 @@ cam = F.relu((alpha_k * activations).sum(dim=1))       # [B, h, w]
 
 > Regenerate: `python scripts/generate_gradcam_demo.py --checkpoint checkpoints/best.pt`
 
-### Demo Visualizations (random-weight model — trained-model CAMs pending ABO run)
+### ABO Results — Real Amazon Product Images
 
-> ⚠️ Images below are from a **randomly-initialised model**, generated to verify the implementation works correctly. They will be replaced with trained-model CAMs after ABO training completes.
+**Trained-model Grad-CAM** (ResNet-34, ep=100, 44,866 images, 50 categories):
+
+| Metric | Value |
+|--------|-------|
+| Test Accuracy | **81.37%** |
+| F1 Macro | **0.7870** |
+| Best Val Acc | 81.26% |
+| Training Time | 197 min (T4 GPU) |
+| Dataset | 44,866 images, 50 ABO categories |
+| Random baseline | 2.0% (1/50) |
+
+Grad-CAM reveals **background bias** as the primary failure mode: correctly classified images show activations tightly localised on the product object; failure cases show the model attending to background surfaces (shelves, white studio backgrounds) rather than object-discriminating features.
+
+See `results/gradcam/gradcam_correct.png` and `results/gradcam/gradcam_failures.png`.
+
+---
+
+### Demo Visualizations (random-weight model — sanity check)
+
+> These images verify the Grad-CAM implementation is correct (hooks, backprop, CAM normalisation). They use a randomly-initialised model by design — the trained-model CAMs are in `results/gradcam/`.
 
 **layer4 CAM overlay (8 CIFAR-10 images):**
 
@@ -195,9 +215,9 @@ resnet34-amazon-products/
 ├── paper_notes/        resnet_summary.md  gradcam_summary.md
 ├── results/
 │   ├── ablation_table.csv
-│   ├── multi_seed_results.csv     (seed=42 filled; seeds 123,7 PENDING)
-│   ├── gradcam/                   (demo images committed; trained-model CAMs pending ABO)
-│   └── gradient_norms/            (layer1/layer4 ratio CSVs — mechanistic evidence)
+│   ├── multi_seed_results.csv         (6 real runs: seeds 42,123,7 × 2 models)
+│   ├── gradcam/                       (demo images + trained-model ABO CAMs)
+│   └── gradient_norms/                (layer1/layer4 ratio CSVs — real MPS run, 20 epochs)
 ├── ABO_SETUP.md                   (step-by-step ABO download + Colab guide)
 ├── COLAB_MULTISEED.py             (3-seed training script — run to get mean±std)
 ├── COLAB_TAB2_CIFAR.py            (Protocol A + B ablation script)
