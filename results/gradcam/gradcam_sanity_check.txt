@@ -1,0 +1,21 @@
+Grad-CAM Adebayo et al. (2018) Sanity Check
+==================================================
+
+Weight source:     random init [DEMO]
+Image source:      synthetic
+Target layer:      layer4
+n_samples:         0.7228841427163291
+
+Per-sample |ρ|:    [0.6792435812837835, 0.7271068170985225, 0.7498288877017769, 0.7353572847812334]
+Mean |ρ|:          0.7229
+Threshold:         0.5
+Result:            FAIL
+
+Mean |ρ| = 0.7229 (threshold 0.5). FAIL — maps are similar to random model; explanation may capture data structure, not model learning.
+
+Interpretation:
+  A low |ρ| (< 0.5) means Grad-CAM maps from the trained model
+  look different from maps from a randomly-initialised model.
+  This is the expected behaviour for a faithful explanation method.
+  High |ρ| (> 0.5) would indicate the maps reflect data structure
+  rather than learned model behaviour — a red flag.

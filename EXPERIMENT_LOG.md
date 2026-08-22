@@ -62,8 +62,10 @@ KEY RESULTS:
 NOTE: The 93.51% result cited in README came from a DIFFERENT run (E-002b below).
       E-002 uses StepLR+200ep; E-002b uses CosineAnnealingLR+100ep.
 UNEXPECTED FINDINGS:
-  - Layer gradient norms confirmed: layer1/layer4 ratio = 1.9× (ResNet-34) vs 47×
-    (Plain-34 in ABL-A1). Skip connections demonstrably improve gradient flow.
+  - Layer gradient norms confirmed (real 20-epoch MPS run):
+    layer4/layer1 ratio = 1.5× (ResNet-34) vs 0.25× (Plain-34).
+    Plain-34 shows gradient magnitude inversion — layer4 collapses (0.021) while
+    layer1 grows (0.084). ResNet-34 stays balanced at every depth.
     Evidence: results/gradient_norms/ratio_summary.csv
   - ECE of 0.078 indicates moderate overconfidence — motivates Ablation A3.
   - Top-5 confusion pair: automobile/truck share 18 misclassifications each way.
@@ -96,9 +98,10 @@ NOTE: This is the source of the "93.51%" headline result in README.md.
 UNEXPECTED FINDINGS:
   - CosineAnnealingLR converged ~30% faster than StepLR (100ep vs 182 best_epoch)
   - No plateau visible at epoch 100 — could run longer for higher accuracy
-MULTI-SEED STATUS: Seed=42 complete. Seeds 123, 7 PENDING.
+MULTI-SEED STATUS: COMPLETE — all 3 seeds done (42, 123, 7). Real T4 GPU results.
+  ResNet-34: 93.37% ± 0.27%  |  Plain-34: 92.57% ± 0.36%  |  Gap: 0.80pp ± 0.62pp
   See results/multi_seed_results.csv and COLAB_MULTISEED.py.
-NEXT STEPS: Run COLAB_MULTISEED.py to get mean±std across 3 seeds.
+NEXT STEPS: E-003 (ABO training).
 ```
 
 ---
@@ -122,8 +125,9 @@ KEY RESULTS:
 UNEXPECTED FINDINGS:
   - CONFIRMED: Plain-34 barely outperforms BasicCNN (+1.3pp) with 5× more parameters.
     This is the degradation problem — extra layers hurt optimization.
-  - Layer gradient norms: layer1/layer4 ratio = 47× (vs 1.9× for ResNet-34).
-    This is the mechanistic evidence for why skip connections help.
+  - Layer gradient norms (real run): layer4/layer1 ratio = 0.25× for Plain-34.
+    Gradient magnitude inversion — not simple vanishing. layer4 collapses (0.021)
+    while layer1 grows (0.084). This is the mechanistic evidence for skip connections.
   - Plain-34 training loss oscillated more than ResNet-34 — consistent with a rougher
     loss landscape without skip connections.
 CONCLUSION: Skip connections improve accuracy by +18.4pp (73.4% → 91.8%).
@@ -188,27 +192,32 @@ CONCLUSION: CosineAnnealingLR is slightly better, especially on limited epoch bu
 
 ```
 EXPERIMENT ID: E-003
-DATE: [Date]
-CONFIG: configs/abo_resnet34_v1.yaml
+DATE: 2026-08-22
+CONFIG: KAGGLE_ABO.py (100ep, CosineAnnealingLR, T4 GPU)
 HYPOTHESIS: ResNet-34 should achieve >70% test accuracy on ABO top-50 categories,
             with clear failure modes identifiable via Grad-CAM error analysis.
 STATUS: COMPLETED
 KEY RESULTS:
-  top1_accuracy:  83.7%
-  f1_macro:       0.831
-  ece:            0.054
-  training_time:  4h 23m (1 GPU, 224×224)
-  best_epoch:     76
+  top1_accuracy:  81.37%
+  f1_macro:       0.787
+  best_val:       81.26%  (ep 85)
+  training_time:  197 min (T4 GPU, Kaggle)
+  dataset:        44,866 images | 50 classes | train=31,406 val=6,730 test=6,730
+  best_epoch:     85
+  seed:           42 (single seed)
 UNEXPECTED FINDINGS:
-  - Accuracy of 83.7% exceeded the 70% hypothesis — possibly because the top-50
-    categories have cleaner images than the full 398-category set.
-  - Grad-CAM analysis revealed background bias (EC-2) as a major failure mode —
-    28% of errors come from model attending to studio backgrounds, not products.
-    This was not predicted and is the most actionable finding.
-  - Class imbalance ratio in top-50: 47:1. WeightedRandomSampler reduced the
-    imbalance effect (Spearman ρ: 0.89 → 0.72) but did not eliminate it.
-NEXT STEPS: Error analysis (error_analysis.md), ABO ablation with background
-            augmentation.
+  - Accuracy of 81.37% exceeded the 70% hypothesis — top-50 ABO categories have
+    cleaner, more distinct images than the full 398-category set.
+  - Grad-CAM analysis (results/gradcam/) reveals background bias as failure mode:
+    correctly classified images show activations on the product; failures show
+    attention on studio backgrounds and shelves.
+  - Convergence was stable throughout — loss decreased monotonically from 3.80 → 0.10.
+    No warmup required at lr=0.01 with CosineAnnealingLR.
+LIMITATIONS:
+  - Single seed only (no mean±std for ABO)
+  - Background bias claim is qualitative (visual inspection, not IoU-measured)
+  - Not compared to ImageNet-pretrained ResNet-34 baseline
+NEXT STEPS: Error analysis (error_analysis.md).
 ```
 
 ---

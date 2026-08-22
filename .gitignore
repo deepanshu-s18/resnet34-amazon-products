@@ -44,3 +44,11 @@ env/
 # Credentials — NEVER commit
 wandb/
 .netrc
+
+# Internal planning docs
+task.md
+update_repo.sh
+
+# Large checkpoints at root (keep only in checkpoints/)
+/*.pt
+/*.pth

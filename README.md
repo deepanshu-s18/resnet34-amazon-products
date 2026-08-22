@@ -2,6 +2,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![PyTorch 2.x](https://img.shields.io/badge/PyTorch-2.x-orange.svg)](https://pytorch.org/)
+[![Tests](https://github.com/deepanshu-s18/resnet34-amazon-products/actions/workflows/tests.yml/badge.svg)](https://github.com/deepanshu-s18/resnet34-amazon-products/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Implementation of ResNet-34 (He et al., 2016) and Grad-CAM (Selvaraju et al., 2017) from scratch using PyTorch primitives — no `torchvision.models` imports. Built as a research portfolio project targeting Amazon Berkeley Objects (ABO) product classification.
